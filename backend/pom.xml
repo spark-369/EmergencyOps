@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.1.0</version>
+		<relativePath/>
+	</parent>
+	<groupId>com.pstu</groupId>
+	<artifactId>backend</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>backend</name>
+	<description>Intelligent Emergency Response and Resource Optimization Platform</description>
+	<properties>
+		<java.version>17</java.version>
+		<mapstruct.version>1.6.0</mapstruct.version>
+		<resilience4j.version>2.1.0</resilience4j.version>
+		<!--
+			JobRunr is the background-job engine: the outbox sweep and each delivery
+			attempt run as durable JobRunr jobs. Jobs are stored in PostgreSQL through
+			the starter's SQL storage provider (the Redis provider is BETA upstream);
+			Redis is only the event transport.
+
+			The starter creates the StorageProvider, JobScheduler and BackgroundJobServer.
+			The server is configured not to self-start (jobrunr.background-job-server.enabled
+			is false) because the starter would run it during context refresh; JobRunrConfig
+			starts the same bean on ApplicationReadyEvent instead.
+		-->
+		<jobrunr.version>7.3.2</jobrunr.version>
+	</properties>
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<!--
+			JWT support for Spring Security: NimbusJwtDecoder/JwtEncoder and the
+			JwtAuthenticationConverter. `spring-boot-starter-security` alone does not
+			include it (it comes via oauth2-jose), and hand-rolling signature /
+			claim validation is exactly where auth implementations go wrong.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+		</dependency>
+		<!--
+			JobRunr is the delivery engine for the outbox (see EventPublisher and
+			EventOutboxRelay). It persists each delivery attempt as a background job in
+			the application database, so retries, back-off and recurring schedules are
+			JobRunr's job rather than hand-rolled.
+		-->
+		<dependency>
+			<groupId>org.jobrunr</groupId>
+			<artifactId>jobrunr-spring-boot-3-starter</artifactId>
+			<version>${jobrunr.version}</version>
+		</dependency>
+		<!--
+			Redis is the transport events are published to. Pub/sub carries the "a fact
+			happened" signal; a capped list per topic keeps the payload readable after
+			the fact, which is what makes an at-least-once redelivery observable.
+			JobRunr's job state is in PostgreSQL, not here.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-cache</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!--
+			Jackson 2 for the event pipeline (EventEnvelope carries an `Instant
+			occurredAt`, which needs the JSR-310 module). Spring Boot 4 auto-configures
+			Jackson 3 (tools.jackson.*) instead of this namespace, so the bean is
+			declared explicitly in JacksonConfig and the API is pinned here rather than
+			assumed to arrive transitively.
+		-->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.datatype</groupId>
+			<artifactId>jackson-datatype-jsr310</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>org.mapstruct</groupId>
+			<artifactId>mapstruct</artifactId>
+			<version>${mapstruct.version}</version>
+		</dependency>
+		<!--
+			Resilience4j. `spring-boot3` pulls ratelimiter + circuitbreaker +
+			retry + bulkhead with auto-configuration. The authentication endpoints
+			are rate-limited per client IP through RateLimitConfig, and the
+			`management.health.ratelimiters.enabled` flag in application.properties
+			reflects the modules actually present on the classpath.
+		-->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-spring-boot3</artifactId>
+			<version>${resilience4j.version}</version>
+		</dependency>
+		<!--
+			NOTE: no spring-boot-starter-aop here.
+
+			It was added in an earlier revision on the theory that Resilience4j's
+			annotation support needed an AOP provider. It does not: nothing in this
+			project uses AOP. RateLimitConfig calls the RateLimiterRegistry directly,
+			and RoutingService takes its CircuitBreaker as a constructor argument
+			(see ResilienceConfig). No @Aspect, no @EnableAspectJAutoProxy, and
+			deliberately no @RateLimiter annotation — one fixed instance name per
+			endpoint is the shared-counter bug that RateLimitConfig exists to avoid.
+
+			Leaving it in also broke the build: under Spring Boot 4,
+			`spring-boot-starter-aop` is not managed by spring-boot-dependencies, so
+			declaring it without a version failed with
+			"InvalidArtifactRTException: ... spring-boot-starter-aop:null:jar:
+			The version cannot be empty" — which surfaced as a resources-plugin
+			failure during dependency resolution. Removing the unused dependency
+			removes the error; pinning a version would only have kept the dead weight.
+		-->
+		<dependency>
+			<groupId>net.logstash.logback</groupId>
+			<artifactId>logstash-logback-encoder</artifactId>
+			<version>7.4</version>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!--
+			The context-load test boots the full context against an in-memory H2
+			database (see BackendApplicationTests), so it needs no running
+			PostgreSQL. Test scope only: it never ships in the jar.
+		-->
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<excludes>
+						<exclude>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+						</exclude>
+					</excludes>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+				<configuration>
+					<annotationProcessorPaths>
+						<path>
+							<groupId>org.mapstruct</groupId>
+							<artifactId>mapstruct-processor</artifactId>
+							<version>${mapstruct.version}</version>
+						</path>
+						<path>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+						</path>
+						<path>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok-mapstruct-binding</artifactId>
+							<version>0.2.0</version>
+						</path>
+					</annotationProcessorPaths>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

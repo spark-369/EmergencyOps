@@ -1,0 +1,28 @@
+# =============================================================================
+# Build context for the backend image.
+#
+# Without this file the context is the whole directory, so `docker build` uploads
+# target/ (often hundreds of MB of stale classes and jars) and .git/ on every
+# build. Since the Dockerfile now compiles from source, a stale target/ in the
+# context is also a correctness risk: it is not used, but it silently bloats the
+# image build and hides mistakes about which artifact is being shipped.
+# =============================================================================
+
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+.git/
+.gitignore
+.dockerignore
+
+*.md
+!README.md
+
+.idea/
+.vscode/
+*.iml
+
+.env
+.env.*
+# Keep the local stack definition, but never its secrets.
+docker-compose.override.yml

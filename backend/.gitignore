@@ -1,0 +1,45 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### Local environment overrides ###
+# The backend has no .env file: `src/main/resources/application.properties` is the
+# single source of configuration, and secrets reach it as environment variables
+# (JWT_SECRET, DB_PASSWORD) rather than through a committed or local env file.
+#
+# docker compose still reads a `.env` from this directory if one exists, because
+# that is how compose interpolates ${...} in docker-compose.yml. It is ignored here
+# so an accidentally created one can never be committed with live credentials.
+.env
+.env.*
+

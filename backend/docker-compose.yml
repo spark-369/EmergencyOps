@@ -1,0 +1,154 @@
+version: "3.8"
+
+# =============================================================================
+# Local end-to-end stack.
+#
+#   postgres   durable state (incidents, resources, allocations, outbox, JobRunr jobs)
+#   redis      event transport (pub/sub channels + capped per-topic lists)
+#   backend    Spring Boot API: writes state, publishes events, applies commands
+#   frontend   Next.js console
+#
+# `redis:6379` / `postgres:5432` are the service-internal addresses; the published
+# ports serve the host (an IDE run uses localhost:6379).
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: emergency-postgres
+    environment:
+      POSTGRES_DB: emergency_db
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      # No committed default, and no .env file required.
+      #
+      # `mysecretpassword` used to be the fallback here and in
+      # application.properties, so a deployment that forgot to set it silently ran
+      # on a credential that is public in this repository.
+      #
+      # Compose interpolates ${DB_PASSWORD:-...} from the shell environment first.
+      # When it is unset the stack still starts (this is a local development
+      # compose file, not the production deployment), but it starts with a value
+      # that is obvious, consistent across the two services below, and printed in
+      # the startup log so nobody mistakes it for a real secret.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-local-dev-only-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d emergency_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Event transport.
+  #
+  # Job state lives in PostgreSQL, not here: JobRunr's Spring starter uses its SQL
+  # storage provider whenever a DataSource is present, and its Redis provider is still
+  # BETA upstream. Redis carries only the published payloads (a channel plus a capped
+  # list per topic).
+  #
+  # `appendonly yes` keeps those payloads across a restart so an operator can still read
+  # what was published. Delivery itself is durable in the outbox table and in the JobRunr
+  # jobs, so a Redis restart delays consumers rather than losing facts.
+  #
+  # No eviction policy is set. A capped list still needs its writes not to be discarded to
+  # reclaim memory, and an `allkeys-lru` policy could drop the buffer under pressure.
+  # Alert on memory instead of evicting.
+  redis:
+    image: redis:7-alpine
+    container_name: emergency-redis
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emergency-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # No `SPRING_PROFILES_ACTIVE: prod` here: there is no
+      # application-prod.properties, so activating `prod` only produced a
+      # "profile not found"-shaped confusion. Everything the container needs is
+      # passed as explicit environment variables below, which the single
+      # application.properties reads through ${VAR:default} placeholders.
+      DB_URL: jdbc:postgresql://postgres:5432/emergency_db
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      # Must match the postgres service above. Same interpolation, same fallback.
+      DB_PASSWORD: ${DB_PASSWORD:-local-dev-only-password}
+      # This compose file starts from an empty volume, so the first boot has no
+      # tables. `create` builds them from the entities; `validate` (the
+      # application default) would refuse to start against an empty database.
+      # Re-running `up` on an existing volume is safe: `create` is additive and
+      # does not drop anything. Switch to `validate` to match production.
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-create}
+      # Service-internal address of the event transport.
+      # `localhost` here would point at the backend container itself.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Optional override of the consumed-topic list (comma-separated). Left unset, the
+      # application default from application.properties applies. If you change the
+      # topic names, update EVENTS_*_TOPIC and this list together.
+      # EVENTS_CONSUMER_PATTERN: emergency.incidents.v1,emergency.allocations.v1,emergency.resources.v1,emergency.optimization.v1,emergency.accounts.v1
+      # HS256 needs >= 32 bytes and the value must survive restarts, otherwise
+      # every deploy logs every operator out.
+      #
+      # There is deliberately NO committed secret here (it used to be
+      # `change-me-in-production-...`, which boots a stack on a key that is public
+      # in this repository). The fallback below is a notice, not a secret: it is
+      # long enough to satisfy the 32-byte check and every token signed with it is
+      # worthless, because anyone reading this file can forge one.
+      #
+      # For anything beyond a local stack, override it:
+      #   JWT_SECRET=$(openssl rand -base64 48) docker compose up
+      # application.properties has no fallback at all, so a deployment that runs
+      # outside this compose file still fails closed in JwtKeyConfig.
+      JWT_SECRET: ${JWT_SECRET:-insecure-local-dev-key-not-for-deployment-0123456789}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the browser bundle: the address a user's browser can reach.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api/v1}
+    container_name: emergency-frontend
+    depends_on:
+      - backend
+    environment:
+      # Server-side rendering talks to the API over the compose network.
+      BACKEND_URL: http://backend:8080
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
