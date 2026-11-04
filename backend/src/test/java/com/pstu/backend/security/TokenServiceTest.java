@@ -70,7 +70,9 @@ class TokenServiceTest {
         assertThat(jwt.getClaimAsString("name")).isEqualTo("Dana Ops");
         assertThat(jwt.<Long>getClaim("uid")).isEqualTo(42L);
         assertThat(jwt.getClaimAsStringList("roles")).containsExactly("DISPATCHER");
-        assertThat(jwt.getIssuer().toString()).isEqualTo("test-issuer");
+        // `iss` is a plain string in this deployment, so it is read as a claim rather
+        // than through getIssuer(), which would try to parse it as a URL and throw.
+        assertThat(jwt.getClaimAsString("iss")).isEqualTo("test-issuer");
         assertThat(jwt.getExpiresAt()).isAfter(jwt.getIssuedAt());
     }
 

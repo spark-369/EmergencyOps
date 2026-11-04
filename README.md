@@ -1594,7 +1594,15 @@ test boots the full application.
 | Lifecycles | `LifecycleTest` (happy path, no reopen, terminal states) |
 | Allocations | `AllocationIncidentTransitionTest` (first dispatch advances, repeats do not) |
 | Ingest | `EventProcessingServiceTest` (dedupe, non-command skip, retryable vs not, topic list) |
-| Pipeline | `EventEnvelopeTest`, `EventPublisherTest`, `EventOutboxRelayTest` |
+| Pipeline | `EventEnvelopeTest`, `EventPublisherTest`, `EventOutboxRelayTest`, `EventStoreTest` |
+| Triage score | `PriorityCalculatorTest` (severity base, caps, time decay, clamp, haversine) |
+| Decision engine | `OptimizationServiceTest` (capability filter, greedy assignment, ETA provenance) |
+| Dispatch | `AllocationServiceTest` (capacity guard, terminal incident, idempotency, release) |
+| Incident write path | `IncidentServiceTest`, `IncidentLifecycleServiceTest` (score, publish, 404s) |
+| Fleet | `ResourceServiceTest` (available-flag truth, `RESOURCE_STATUS_CHANGED`) |
+| Accounts | `AuthServiceTest`, `UserServiceTest` (enumeration resistance, last-admin guards) |
+| Error contract | `GlobalExceptionHandlerTest` (404/401/403/409/429/500 mappings) |
+| Observability | `CorrelationIdFilterTest` (log-injection guard, MDC round-trip) |
 
 A test asserts that the consumer topic list and the configured topics do **not** drift, and
 that the failure topic is excluded.

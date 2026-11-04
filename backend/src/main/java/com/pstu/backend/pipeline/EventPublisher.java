@@ -74,7 +74,15 @@ public class EventPublisher {
                 }
             });
         } else {
-            action.run();
+            try {
+                action.run();
+            } catch (RuntimeException e) {
+                // Same contract as the transactional branch above: a side effect that
+                // runs after the write is already durable must not surface to the
+                // caller as a failure of that write. The row stays PENDING and the
+                // relay retries it on its next pass.
+                log.warn("Post-commit action failed: {}", e.getMessage(), e);
+            }
         }
     }
 

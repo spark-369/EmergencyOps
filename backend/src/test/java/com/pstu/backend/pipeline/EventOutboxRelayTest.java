@@ -138,7 +138,9 @@ class EventOutboxRelayTest {
     @Test
     void flushDeliversThePendingRowsWithinTheBudget() {
         givenPending(row(1), row(2));
-        when(publisher.deliverBatch(any(), nullable(BooleanSupplier.class))).thenReturn(2);
+        // flushBounded attempts the pending batch, then the exhausted batch; only the
+        // pending rows are delivered here, so the second call reports nothing.
+        when(publisher.deliverBatch(any(), nullable(BooleanSupplier.class))).thenReturn(2, 0);
 
         int delivered = relay.flushBounded(Duration.ofSeconds(5));
 
@@ -164,8 +166,12 @@ class EventOutboxRelayTest {
             // A concurrent call during this pass must not double-deliver. Captured
             // rather than asserted here: an assertion thrown inside a Mockito answer is
             // rethrown as a mock failure and masks the real cause.
-            concurrent.add(relay.flushBounded(Duration.ofMillis(10)));
-            return 1;
+            if (concurrent.isEmpty()) {
+                concurrent.add(relay.flushBounded(Duration.ofMillis(10)));
+                return 1;
+            }
+            // The second call is the exhausted batch, which has nothing queued.
+            return 0;
         });
 
         assertThat(relay.flushBounded(Duration.ofSeconds(1))).isEqualTo(1);

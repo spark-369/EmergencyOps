@@ -206,6 +206,17 @@ public class RoutingService {
             if (segment.getFromLocation() == null || segment.getToLocation() == null) {
                 continue;
             }
+            /*
+             * A closed road must never be routed through. The query already excludes
+             * CLOSED ({@code findByStatusNot}), so this is belt and braces — but
+             * without it a fixture, a cached row or a future query change would let
+             * the router send a unit across a closed bridge: CLOSED is not one of the
+             * priced statuses below, so it would silently fall into the free-flow
+             * default and look like an open road.
+             */
+            if (segment.getStatus() == RoadStatus.CLOSED) {
+                continue;
+            }
             // `status` is NOT NULL in the schema, but a legacy row or a hand-written
             // fixture can still carry null; the switch below would throw NPE and
             // fail the whole route. Treat an unknown status as free-flow instead.

@@ -45,6 +45,9 @@ class EventPublisherTest {
         eventBus = mock(RedisEventBus.class);
 
         record = PipelineEventRecord.builder()
+                // A non-null id matters: equals/hashCode are identity-based, so two
+                // records built without one are equal and their Mockito stubs collide.
+                .id(1L)
                 .eventId("evt-1")
                 .eventType(DomainEventType.INCIDENT_CREATED)
                 .aggregateId("inc-1")
@@ -54,6 +57,9 @@ class EventPublisherTest {
                 .build();
 
         when(eventStore.store(any())).thenReturn(record);
+        // A row that decodes cleanly: deliverBatch deserialises before it delivers, so
+        // without this stub the mock hands back null and every row looks undeliverable.
+        when(eventStore.deserialize(record)).thenReturn(incidentCreated());
         publisher = new EventPublisher(eventStore, scheduling, eventBus);
     }
 
@@ -130,7 +136,9 @@ class EventPublisherTest {
     @Test
     void deliverBatchSkipsUnreadableRowsAndStopsAtItsDeadline() {
         when(eventBus.publish(any())).thenReturn(true);
-        PipelineEventRecord bad = PipelineEventRecord.builder().eventId("bad").build();
+        // Distinct id, so the corrupt row is not equal() to the good one — otherwise
+        // this stub would also match `record` and every row would look unreadable.
+        PipelineEventRecord bad = PipelineEventRecord.builder().id(2L).eventId("bad").build();
         when(eventStore.deserialize(bad)).thenThrow(new IllegalStateException("corrupt"));
 
         int delivered = publisher.deliverBatch(List.of(bad, record, record), () -> false);
